@@ -57,7 +57,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - 
         name: Login to GitHub Packages
-        if: success()
+        if: success() && github.event_name != 'pull_request'
         uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
@@ -65,7 +65,7 @@ jobs:
           password: ${{ github.token }}
       -
         name: Docker Buildx (push)
-        if: success()
+        if: success() && github.event_name != 'pull_request'
         run: |
           docker buildx build --output "type=image,push=true" ${{ steps.prepare.outputs.buildx_args }}
       -
