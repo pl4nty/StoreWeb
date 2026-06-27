@@ -22,6 +22,11 @@ namespace StoreWeb.Controllers
         // Accepts the same parameters as api/Packages, but instead of returning data
         // it issues a temporary redirect to the primary install file (e.g. appxbundle),
         // ignoring framework dependencies.
+        //
+        // Dependencies can't be queried from the catalog on their own, so to grab one
+        // (e.g. a framework like Microsoft.NET.Native.Framework.2.2) pass Name (and
+        // optionally Arch) to redirect to that specific package out of the product's
+        // package list instead of the primary install file.
         [HttpGet]
         public async Task<IActionResult> GetDownload(
             /*Mandatory get parameter*/ string Id,
@@ -29,7 +34,9 @@ namespace StoreWeb.Controllers
             string Environment = "Production",
             string Market = "US",
             string Lang = "en",
-            string Msatoken = null)
+            string Msatoken = null,
+            string Name = null,
+            string Arch = null)
         {
             Packages packagerequest = new Packages()
             {
@@ -80,6 +87,22 @@ namespace StoreWeb.Controllers
                 await dcat.QueryDCATAsync(packagerequest.id, packagerequest.type);
             }
             var productpackages = await dcat.GetPackagesForProductAsync();
+
+            // When a Name (and optionally Arch) is supplied, redirect to that specific package
+            // out of the full list rather than the primary install file. This is how a single
+            // dependency (e.g. a framework) is downloaded, since dependencies can't be queried
+            // from the catalog independently of the product that pulls them in.
+            if (!string.IsNullOrWhiteSpace(Name))
+            {
+                PackageInstance dependency = productpackages.FirstOrDefault(package =>
+                    MonikerMatches(package.PackageMoniker, Name, Arch));
+                if (dependency == null)
+                {
+                    return NotFound();
+                }
+                return Redirect(dependency.PackageUri.ToString());
+            }
+
             var mainPackage = dcat.ProductListing.Product.DisplaySkuAvailabilities[0].Sku.Properties.Packages[0];
 
             // The main package's family name (e.g. Microsoft.WindowsCalculator_8wekyb3d8bbwe) lets us
@@ -129,6 +152,34 @@ namespace StoreWeb.Controllers
                 Response.Headers["x-ms-meta-version"] = mainPackage.Version;
             }
             return Redirect(downloadUri.ToString());
+        }
+
+        // Matches a package moniker against a requested name and (optionally) architecture.
+        // Monikers look like "Microsoft.NET.Native.Framework.2.2_2.2.29512.0_x64__8wekyb3d8bbwe",
+        // i.e. name_version_arch__publisher, so we split on '_' and compare the relevant parts.
+        private static bool MonikerMatches(string moniker, string name, string arch)
+        {
+            if (string.IsNullOrEmpty(moniker))
+            {
+                return false;
+            }
+            string[] parts = moniker.Split('_');
+            if (parts.Length < 3)
+            {
+                return false;
+            }
+            string monikerName = parts[0];
+            string monikerArch = parts[2];
+            if (!monikerName.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            if (!string.IsNullOrWhiteSpace(arch) &&
+                !monikerArch.Equals(arch, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            return true;
         }
 
         // Resolves the actual file name a download URL serves via its Content-Disposition header.
